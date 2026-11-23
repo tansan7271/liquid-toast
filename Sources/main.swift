@@ -18,7 +18,7 @@ enum Prefs {
 }
 
 /// 메뉴바에 물방울 아이콘 하나를 두고, 음량·밝기·재생 같은 기능 키를 누르거나 Dock 가리기가 바뀌면
-/// 화면 가운데에 유리 토스트를 띄워 그 아이콘으로 날려 보낸다.
+/// 화면 가운데에 유리 토스트를 띄워 그 아이콘으로 날려 보낸다. 사용자가 정한 단축키에도 고른 아이콘을 띄운다.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -26,6 +26,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let toast = GlassToast()
     private let keys = KeyWatcher()
     private let dock = DockWatcher()
+    private let shortcuts = ShortcutStore()
+    private lazy var shortcutWatcher = ShortcutWatcher(store: shortcuts)
+    private lazy var settingsUI = SettingsUI(store: shortcuts)
+    private let settingsWindow = SettingsWindowController()
     /// 손쉬운 사용 권한이 허용되기를 기다리는 동안만 도는 확인 타이머.
     private var trustTimer: Timer?
 
@@ -38,12 +42,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         dock.onChange = { [weak self] hidden in
             self?.show(hidden ? "dock.arrow.down.rectangle" : "dock.arrow.up.rectangle", group: "dock")
         }
+        shortcutWatcher.onMatch = { [weak self] rule in
+            self?.show(rule.symbol, group: "custom-\(rule.id)")
+        }
+        shortcutWatcher.isPaused = { [weak self] in self?.settingsUI.recordingID != nil }
+        shortcuts.onChange = { [weak self] in self?.sync(prompt: false) }
         sync(prompt: true)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         keys.stop()
         dock.stop()
+        shortcutWatcher.stop()
     }
 
     // MARK: 켜고 끄기
@@ -57,11 +67,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard Prefs.enabled else {
             keys.stop()
             dock.stop()
+            shortcutWatcher.stop()
             return
         }
         dock.start()
         guard AXIsProcessTrusted() else {
             keys.stop()
+            shortcutWatcher.stop()
             if prompt {
                 _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
             }
@@ -71,6 +83,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         keys.start()
+        // 일반 키 입력을 받는 감시라서, 정해 둔 단축키가 있을 때만 켠다.
+        if shortcuts.hasActiveRules {
+            shortcutWatcher.start()
+        } else {
+            shortcutWatcher.stop()
+        }
     }
 
     @objc private func checkTrust() {
@@ -125,6 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         enabled.state = Prefs.enabled ? .on : .off
         menu.addItem(enabled)
         menu.addItem(item(L("미리 보기", "Preview"), #selector(preview)))
+        menu.addItem(item(L("단축키 토스트 설정…", "Shortcut Toasts…"), #selector(openSettings), key: ","))
 
         if Prefs.enabled, !AXIsProcessTrusted() {
             menu.addItem(.separator())
@@ -163,6 +182,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             MainActor.assumeIsolated {
                 self.show("drop.fill", group: "preview")
             }
+        }
+    }
+
+    @objc private func openSettings() {
+        settingsWindow.show(ui: settingsUI) { [weak self] symbol in
+            self?.show(symbol, group: "preview")
         }
     }
 
