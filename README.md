@@ -2,6 +2,8 @@
 
 [한국어](README.ko.md)
 
+![Liquid Toast demo](docs/demo.gif)
+
 A macOS menu bar app that shows a Liquid Glass toast when you press the volume, brightness, or media keys. A glass drop pops up in the middle of the screen with an icon, flies into the menu bar, and splashes against the top of the screen.
 
 ## Features
